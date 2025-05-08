@@ -83,29 +83,27 @@ func Read() (Config, error) {
 }
 
 // set username in gatorconfig json
-func SetUser(userName string) (Config, error) {
-	// read the config file
-	cfg, err := Read() // we already built this function! no need to decode etc!
-
-	// read check
-	if err != nil {
-		return Config{}, fmt.Errorf("error reading config file: %w", err)
+// takes config as receiver! not a standalone func!
+func (c *Config) SetUser(userName string) error {
+	// nil ptr check
+	if c == nil {
+		return fmt.Errorf("error: config is nil")
 	}
 
 	// update the username field
 	// *cfg.Name = "gator bites!" - this will cause Go panic - field is still nil!
-	cfg.Name = &userName // safe way to update field
+	c.Name = &userName // safe way to update field
 
 	// write the updated config file using helper
-	err = write(cfg)
+	err := write(*c)
 
 	// write check
 	if err != nil {
-		return cfg, fmt.Errorf("error writing updated config file: %w", err)
+		return fmt.Errorf("error writing updated config file: %w", err)
 	}
 
-	// return Json config
-	return cfg, nil
+	// return success
+	return nil
 }
 
 // get config file path helper function

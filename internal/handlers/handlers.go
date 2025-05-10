@@ -185,3 +185,41 @@ func HandlerRegister(s *app.State, cmd app.Command) error {
 	// return success
 	return nil
 }
+
+// reset handler logic
+// NOTE: cmd will be reset, and state holds the config file to "reset" the users table
+// NOTE: this is a dangerous command, so be careful with it! (for production code! but for our little app, it's fine)
+func HandlerReset(s *app.State, cmd app.Command) error {
+	// state ptr check
+	if s == nil {
+		fmt.Printf("error: State is nil")
+		os.Exit(1) // clean exit code 1
+	}
+
+	/* Note: the method that SQLC generated
+	METHOD Reset:
+
+	func (q *Queries) Reset(ctx context.Context) error {
+		_, err := q.db.ExecContext(ctx, reset)
+		return err
+	} */
+
+	// run the reset command
+	err := s.DB.Reset(context.Background())
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// reset check
+	if err != nil {
+		fmt.Printf("error resetting database: %s\n", err)
+		os.Exit(1) // clean exit code 1
+	}
+
+	// success with code 0
+	fmt.Printf("Database successfully reset!\n")
+	os.Exit(0) // clean exit code 0
+
+	// return success
+	return nil
+	// this will never be reached, but it's here for the requirement of the Register function
+	// and to make the function complete
+}

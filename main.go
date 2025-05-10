@@ -72,6 +72,12 @@ func main() {
 	// "register" = the command we register
 	// HandlerRegister works on handlers, and registers "register" there
 
+	// register the handler function for the register cmd
+	cmds.Register("reset", handlers.HandlerReset)
+	// sets users table to prevent down/up migration for each test
+	// "reset" = the command we register
+	// HandlerReset works on handlers, and registers "reset" there
+
 	// CLI args check
 	// 2 CLI args min! 1st = command, 2nd = arg
 	if len(os.Args) < 2 {

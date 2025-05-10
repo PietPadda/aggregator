@@ -223,3 +223,81 @@ func HandlerReset(s *app.State, cmd app.Command) error {
 	// this will never be reached, but it's here for the requirement of the Register function
 	// and to make the function complete
 }
+
+// getusers handler logic
+// NOTE: cmd will be users, and state holds the config file to "users" from users table, also showing "current" user
+func HandlerGetUsers(s *app.State, cmd app.Command) error {
+	// state ptr check
+	if s == nil {
+		fmt.Printf("error: State is nil")
+		os.Exit(1) // clean exit code 1
+	}
+
+	/* Note: the method that SQLC generated
+		METHOD GetUsers:
+
+	func (q *Queries) GetUsers(ctx context.Context) ([]string, error) {
+	    rows, err := q.db.QueryContext(ctx, getUsers)
+	    if err != nil {
+	        return nil, err
+	    }
+	    defer rows.Close()
+	    var items []string
+	    for rows.Next() {
+	        var name string
+	        if err := rows.Scan(&name); err != nil {
+	            return nil, err
+	        }
+	        items = append(items, name)
+	    }
+	    if err := rows.Close(); err != nil {
+	        return nil, err
+	    }
+	    if err := rows.Err(); err != nil {
+	        return nil, err
+	    }
+	    return items, nil
+	} */
+
+	// run the getusers command
+	users, err := s.DB.GetUsers(context.Background())
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// getusers check
+	if err != nil {
+		fmt.Printf("error returning registered users from database: %s\n", err)
+		os.Exit(1) // clean exit code 1
+	}
+
+	// no users check
+	if len(users) == 0 {
+		fmt.Printf("No users registered in database!\n")
+		os.Exit(0) // clean exit code 0
+	}
+
+	// nil current user check
+	if s.Config.Name == nil {
+		fmt.Printf("error: current user is nil\n")
+		os.Exit(1) // clean exit code 1
+	}
+
+	// get current user (safely deref after checking nil ptr)
+	currentUser := *s.Config.Name // deref as it's *string :)
+
+	// print users from database
+	for _, user := range users {
+		// check if current user
+		if user == currentUser {
+			fmt.Printf("* %s (current)\n", user)
+			continue // skip to next user (else we print it twice)
+		}
+		fmt.Printf("* %s\n", user)
+	}
+	// succesfully printed users
+	os.Exit(0) // clean exit code 0
+
+	// return success
+	return nil
+	// this will never be reached, but it's here for the requirement of the Register function
+	// and to make the function complete
+}

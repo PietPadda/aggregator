@@ -3,13 +3,18 @@ package main
 
 import (
 	// standard go libarries
+	"database/sql"
 	"fmt" // for printing
 	"os"  // for file reading/writing
 
 	// internal packages
 	"github.com/PietPadda/aggregator/internal/app"
 	"github.com/PietPadda/aggregator/internal/config"
+	"github.com/PietPadda/aggregator/internal/database"
 	"github.com/PietPadda/aggregator/internal/handlers"
+
+	// package drivers
+	_ "github.com/lib/pq" // postgreSQL driver
 )
 
 func main() {
@@ -24,9 +29,25 @@ func main() {
 		os.Exit(1) // clean exit
 	}
 
+	// open connection to PostgreSQL database
+	db, err := sql.Open("postgres", *cfg.URL)
+	// takes driver + db connection string (ptr to config.URL)
+
+	// db check
+	if err != nil {
+		fmt.Println("Error connecting to database:", err)
+		os.Exit(1) // clean exit
+	}
+
+	// create database instance
+	dbQueries := database.New(db) // create db queries instance
+	// dbQueries is a ptr to the Queries struct in the database package
+	// provides methods to interact with the database instead of using raw SQL
+
 	// create state instance and store config in
 	state := &app.State{ // app
 		Config: &cfg,
+		DB:     dbQueries,
 	}
 	// we declare state as a ptr to app.State, thus use &app! (our funcs use s *State !)
 	// Config is ptr in the State struct, thus we use &cfg
@@ -39,11 +60,17 @@ func main() {
 	// Handler is in Commands struct, and we have to init the map! takes State ptr and Command!
 	// why init the map? Because Go maps need to be init before they can be used! prevents Go panic
 
-	// register the  handler function for the login cmd
+	// register the handler function for the login cmd
 	cmds.Register("login", handlers.HandlerLogin)
 	// Registers receivces commands
 	// "login" = the command we register
 	// HandlerLogin works on handlers, and registers "login" there
+
+	// register the handler function for the register cmd
+	cmds.Register("register", handlers.HandlerRegister)
+	// Registers receivces commands
+	// "register" = the command we register
+	// HandlerRegister works on handlers, and registers "register" there
 
 	// CLI args check
 	// 2 CLI args min! 1st = command, 2nd = arg

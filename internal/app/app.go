@@ -7,11 +7,13 @@ import (
 
 	// internal packages
 	"github.com/PietPadda/aggregator/internal/config"
+	"github.com/PietPadda/aggregator/internal/database"
 )
 
 // app state struct
 type State struct {
-	Config *config.Config // ptr Config, Config type from config package
+	Config *config.Config    // config instance, ptr Config, Config type from config package
+	DB     *database.Queries // database instance, ptr to Queries type from database package
 }
 
 // cli command struct

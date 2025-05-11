@@ -358,3 +358,105 @@ func HandlerAgg(s *app.State, cmd app.Command) error {
 	// return success
 	return nil
 }
+
+// addfeed handler logic
+// NOTE: cmd will be addfeed, and state holds the config file, it will add a new feed to the database
+func HandlerAddFeed(s *app.State, cmd app.Command) error {
+	// state ptr check
+	if s == nil {
+		return fmt.Errorf("error: State is nil")
+	}
+
+	// cmd input check
+	// command is a struct, get its field for length check
+	if len(cmd.Args) < 2 {
+		return fmt.Errorf("error: feed name and url args required")
+	} // login handler expects TWO arg: feed NAME and URL!
+
+	// get arguments input
+	feedName := cmd.Args[0] // not needed, but nicely readable!
+	feedURL := cmd.Args[1]  // not needed, but nicely readable!
+
+	// nil current user check
+	if s.Config.Name == nil {
+		return fmt.Errorf("error: current user is nil/not logged in")
+	}
+
+	// get current user (safely deref after checking nil ptr)
+	currentUser := *s.Config.Name // deref as it's *string :)
+
+	// get user by currentUser from database to set the feed's fk user_id
+	user, err := s.DB.GetUser(context.Background(), currentUser)
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// user check
+	if err != nil {
+		return fmt.Errorf("error getting user from db: %w", err)
+	}
+
+	// get feed id as UUID and timestamp for created/updated at fields
+	id := uuid.New()          // generate new UUID
+	currentTime := time.Now() // get current time
+	userID := user.ID         // get user id from user struct
+
+	/* Note: the method & struct that SQLC generated
+		METHOD GetUser:
+
+	func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, error) {
+		row := q.db.QueryRowContext(ctx, createFeed,
+			arg.ID,
+			arg.CreatedAt,
+			arg.UpdatedAt,
+			arg.Name,
+			arg.Url,
+			arg.UserID,
+		)
+		var i Feed
+		err := row.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Name,
+			&i.Url,
+			&i.UserID,
+		)
+		return i, err
+	}
+
+	STRUCT CreateFeedParams:
+	type CreateFeedParams struct {
+		ID        uuid.UUID
+		CreatedAt time.Time
+		UpdatedAt time.Time
+		Name      string
+		Url       string
+		UserID    uuid.UUID
+	} */
+
+	// create new feed in database
+	feed, err := s.DB.CreateFeed(context.Background(), database.CreateFeedParams{
+		ID:        id,          // set id to UUID
+		CreatedAt: currentTime, // set created at to current time
+		UpdatedAt: currentTime, // set updated at to current time
+		Name:      feedName,    // set name to feedname, arg 0
+		Url:       feedURL,     // set url to feedURL, arg 1
+		UserID:    userID,      // set user id to current user
+	})
+	// CreateFeed is a method from DB pass through state s (we made using users.sql)
+	// CreateFeedParams is a struct that was genned in database package
+	// could do "_, err := ..." but we need feed for printing confirmation msg
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// user registration check
+	if err != nil {
+		return fmt.Errorf("error adding new feed to database: %w", err)
+	}
+
+	// print confirmation msg to user + log feed details
+	fmt.Printf("RSS Feed '%s' has successfully been added to database!\n", feedName)                                    // confirmation msg
+	fmt.Printf("Feed details:\n  ID = %s\n  CreatedAt = %s\n  UpdatedAt = %s\n  Name = %s\n  URL: %s\n  UserID = %s\n", // log user details
+		feed.ID, feed.CreatedAt, feed.UpdatedAt, feed.Name, feed.Url, feed.UserID)
+
+	// return success
+	return nil
+}

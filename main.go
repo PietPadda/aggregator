@@ -90,6 +90,12 @@ func main() {
 	// "agg" = the command we register
 	// HandlerAgg works on handlers, and registers "agg" there
 
+	// register the handler function for the addfeed cmd
+	cmds.Register("addfeed", handlers.HandlerAddFeed)
+	// adds a feed to the database
+	// "addfeed" = the command we register
+	// HandlerAgg works on handlers, and registers "addfeed" there
+
 	// CLI args check
 	// 2 CLI args min! 1st = command, 2nd = arg
 	if len(os.Args) < 2 {

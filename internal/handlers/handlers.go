@@ -3,17 +3,18 @@ package handlers
 
 import (
 	// std go libs
-	"context"
-	"database/sql"
-	"errors"
-	"fmt" // print errors
-	"os"
-	"time"
+	"context"      // for context
+	"database/sql" // for sql errors
+	"errors"       // for error handling
+	"fmt"          // print errors
+	"os"           // for file reading/writing
+	"time"         // context timeout
 
 	// internal packages
-	"github.com/PietPadda/aggregator/internal/app"
-	"github.com/PietPadda/aggregator/internal/database"
-	"github.com/google/uuid"
+	"github.com/PietPadda/aggregator/internal/app"      // for State and Command
+	"github.com/PietPadda/aggregator/internal/database" // for DB Go code from SQLC
+	"github.com/PietPadda/aggregator/internal/rssfeed"  // for RSS feed fetching
+	"github.com/google/uuid"                            // for UUID generation
 )
 
 // login handler logic
@@ -300,4 +301,60 @@ func HandlerGetUsers(s *app.State, cmd app.Command) error {
 	return nil
 	// this will never be reached, but it's here for the requirement of the Register function
 	// and to make the function complete
+}
+
+// agg handler logic
+// NOTE: cmd will be agg, and state holds the config file, it will "agg"regate the RSSFeed
+// FetchFeed handles the error checking and parsing of the RSS feed
+func HandlerAgg(s *app.State, cmd app.Command) error {
+	// state ptr check
+	if s == nil {
+		return fmt.Errorf("error: State is nil")
+	}
+
+	// create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel() // Don't forget to cancel to prevent resource leaks
+	// context.WithTimeout creates a new context with a timeout of 10 seconds
+	// this is used to limit the time the function can run, in case of a slow network or server
+	// cancel is a function that cancels the context, and should be called when done
+
+	// run the fetchfeed command
+	feed, err := rssfeed.FetchFeed(ctx, "https://www.wagslane.dev/index.xml")
+
+	// fetchfeed check
+	if err != nil {
+		return fmt.Errorf("error aggregating RSS feed: %w", err)
+	}
+
+	// print the entire RSSFeed struct
+	// HEADER
+	fmt.Printf("RSS Feed:\n")
+
+	// CHANNEL
+	fmt.Printf("  Title: %s\n", feed.Channel.Title)
+	fmt.Printf("  Link: %s\n", feed.Channel.Link)
+	fmt.Printf("  Description: %s\n", feed.Channel.Description)
+	fmt.Printf("  Generator: %s\n", feed.Channel.Generator)
+	fmt.Printf("  Language: %s\n", feed.Channel.Language)
+	fmt.Printf("  LastBuildDate: %s\n", feed.Channel.LastBuildDate)
+	fmt.Printf("  Atom: %s\n", feed.Channel.Atom.Href)
+	fmt.Printf("  Atom Rel: %s\n", feed.Channel.Atom.Rel)
+	fmt.Printf("  Atom Type: %s\n", feed.Channel.Atom.Type)
+
+	// RSSFEED
+	fmt.Printf("  Items:\n")
+	for _, item := range feed.Channel.Items {
+		fmt.Printf("    Title: %s\n", item.Title)
+		fmt.Printf("    Link: %s\n", item.Link)
+		fmt.Printf("    PubDate: %s\n", item.PubDate)
+		fmt.Printf("    GUID: %s\n", item.GUID)
+		fmt.Printf("    Description: %s\n", item.Description)
+	}
+
+	// succesfully printed RSSFeed user confirmation msg
+	fmt.Printf("RSS Feed successfully aggregated!\n")
+
+	// return success
+	return nil
 }

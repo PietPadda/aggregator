@@ -84,6 +84,12 @@ func main() {
 	// "users" = the command we register
 	// HandlerReset works on handlers, and registers "users" there
 
+	// register the handler function for the agg cmd
+	cmds.Register("agg", handlers.HandlerAgg)
+	// prints the aggregated RSS feed
+	// "agg" = the command we register
+	// HandlerAgg works on handlers, and registers "agg" there
+
 	// CLI args check
 	// 2 CLI args min! 1st = command, 2nd = arg
 	if len(os.Args) < 2 {

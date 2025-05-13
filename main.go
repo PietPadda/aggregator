@@ -92,9 +92,27 @@ func main() {
 
 	// register the handler function for the addfeed cmd
 	cmds.Register("addfeed", handlers.HandlerAddFeed)
-	// adds a feed to the database
+	// adds a feed to the database (And follows it)
 	// "addfeed" = the command we register
 	// HandlerAgg works on handlers, and registers "addfeed" there
+
+	// register the handler function for the feeds cmd
+	cmds.Register("feeds", handlers.HandlerFeeds)
+	// lists all feeds in db with created user name
+	// "feeds" = the command we register
+	// HandlerFeeds works on handlers, and registers "feeds" there
+
+	// register the handler function for the follow cmd
+	cmds.Register("follow", handlers.HandlerFollow)
+	// current user follows a feed
+	// "follow" = the command we register
+	// HandlerFollow works on handlers, and registers "follow" there
+
+	// register the handler function for the following cmd
+	cmds.Register("following", handlers.HandlerFollowing)
+	// lists all feeds the current user follows
+	// "following" = the command we register
+	// HandlerFollowing works on handlers, and registers "following" there
 
 	// CLI args check
 	// 2 CLI args min! 1st = command, 2nd = arg

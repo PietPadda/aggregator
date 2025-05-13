@@ -8,7 +8,8 @@ import (
 	"errors"       // for error handling
 	"fmt"          // print errors
 	"os"           // for file reading/writing
-	"time"         // context timeout
+	"strings"
+	"time" // context timeout
 
 	// internal packages
 	"github.com/PietPadda/aggregator/internal/app"      // for State and Command
@@ -457,6 +458,329 @@ func HandlerAddFeed(s *app.State, cmd app.Command) error {
 	fmt.Printf("Feed details:\n  ID = %s\n  CreatedAt = %s\n  UpdatedAt = %s\n  Name = %s\n  URL: %s\n  UserID = %s\n", // log user details
 		feed.ID, feed.CreatedAt, feed.UpdatedAt, feed.Name, feed.Url, feed.UserID)
 
+	// before finishing, we also follow the feed for the current user :)
+	// we COULD do all the logic, but HandlerFollow already exists
+	// GO: function order doesn't matter in go, as long it's in the same package, we can just call it!
+
+	// first let's create a new command for the follow handler
+	// NOTE: this is a bit of a hack, but it works!
+	followCmd := app.Command{
+		Name: "follow",
+		Args: []string{feedURL}, // we need the URL to follow the feed]
+	}
+
+	// Call the follow handler to follow the feed!
+	// we'll use our "hacky" followCmd command to do thid!
+	err = HandlerFollow(s, followCmd)
+
+	// follow handler check
+	if err != nil {
+		// nice to have but NOT critical, so we just print a warning INSTEAD OF EXITING!
+		fmt.Printf("Warning: error following feed: %s", err)
+	}
+
 	// return success
 	return nil
+}
+
+// feeds handler logic
+// NOTE: cmd will be feeds, and state holds the config file to db, feedname, feedurl and username that CREATED it
+func HandlerFeeds(s *app.State, cmd app.Command) error {
+	// state ptr check
+	if s == nil {
+		fmt.Printf("error: State is nil")
+		os.Exit(1) // clean exit code 1
+	}
+
+	/* Note: the method that SQLC generated
+	METHOD ListFeedsWithCreator:
+
+	func (q *Queries) ListFeedsWithCreator(ctx context.Context) ([]ListFeedsWithCreatorRow, error) {
+		rows, err := q.db.QueryContext(ctx, listFeedsWithCreator)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var items []ListFeedsWithCreatorRow
+		for rows.Next() {
+			var i ListFeedsWithCreatorRow
+			if err := rows.Scan(&i.Feedname, &i.Feedurl, &i.Username); err != nil {
+				return nil, err
+			}
+			items = append(items, i)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return items, nil
+	}
+
+	STRUCT ListFeedsWithCreatorRow:
+
+	type ListFeedsWithCreatorRow struct {
+		Feedname string
+		Feedurl  string
+		Username string
+	}*/
+
+	// run the listfeedswithcreator sql query
+	feeds, err := s.DB.ListFeedsWithCreator(context.Background())
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// listfeed check
+	if err != nil {
+		fmt.Printf("error returning feeds from database: %s\n", err)
+		os.Exit(1) // clean exit code 1
+	}
+
+	// no feeds check
+	if len(feeds) == 0 {
+		fmt.Printf("No feeds logged in database!\n")
+		os.Exit(0) // clean exit code 0
+	}
+
+	// print feeds header
+	fmt.Println("Feeds list based on creator:")
+	fmt.Println() // newline
+
+	// print feeds from database
+	for _, feed := range feeds {
+		fmt.Printf("Feed name: %s\n", feed.Feedname)
+		fmt.Printf("Feed URL: %s\n", feed.Feedurl)
+		fmt.Printf("Created by: %s\n", feed.Username)
+		fmt.Println() // newline
+	}
+	// succesfully printed users
+	os.Exit(0) // clean exit code 0
+
+	// return success
+	return nil
+	// this will never be reached, but it's here for the requirement of the Register function
+	// and to make the function complete
+}
+
+// follow handler logic
+// NOTE: cmd will be follow, and state holds the config file to allow current user to "follow" a feed
+// essentially adds a feed follow record to the database
+func HandlerFollow(s *app.State, cmd app.Command) error {
+	// state ptr check
+	if s == nil {
+		return fmt.Errorf("error: State is nil")
+	}
+
+	// cmd input check
+	// command is a struct, get its field for length check
+	if len(cmd.Args) == 0 {
+		return fmt.Errorf("error: no command input")
+	} // login handler expects ONE arg: the url!
+
+	// get url input (first arg!)
+	urlArg := cmd.Args[0] // not needed, but nicely readable!
+
+	// get feed follow id as UUID and timestamp for created/updated at fields
+	id := uuid.New()          // generate new UUID
+	currentTime := time.Now() // get current time
+
+	/* Note: the methods & struct that SQLC generated
+	METHOD GetFeedByURL:
+
+	func (q *Queries) GetFeedByURL(ctx context.Context, url string) (Feed, error) {
+		row := q.db.QueryRowContext(ctx, getFeedByURL, url)
+		var i Feed
+		err := row.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Name,
+			&i.Url,
+			&i.UserID,
+		)
+		return i, err
+	}
+
+	METHOD CreateFeedFollows:
+
+	func (q *Queries) CreateFeedFollows(ctx context.Context, arg CreateFeedFollowsParams) (CreateFeedFollowsRow, error) {
+		row := q.db.QueryRowContext(ctx, createFeedFollows,
+			arg.ID,
+			arg.CreatedAt,
+			arg.UpdatedAt,
+			arg.UserID,
+			arg.FeedID,
+		)
+		var i CreateFeedFollowsRow
+		err := row.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.UserID,
+			&i.FeedID,
+			&i.Username,
+			&i.Feedname,
+		)
+		return i, err
+	}
+
+	STRUCT CreateFeedFollowsParams:
+
+	type CreateFeedFollowsParams struct {
+		ID        uuid.UUID
+		CreatedAt time.Time
+		UpdatedAt time.Time
+		UserID    uuid.UUID
+		FeedID    uuid.UUID
+	} */
+
+	// nil current user check
+	if s.Config.Name == nil {
+		return fmt.Errorf("error: current user is nil/not logged in")
+	}
+
+	// get current user (safely deref after checking nil ptr)
+	currentUser := *s.Config.Name // deref as it's *string :)
+
+	// get user by currentUser from database to set the feed follow's fk user_id
+	user, err := s.DB.GetUser(context.Background(), currentUser)
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// user check
+	if err != nil {
+		return fmt.Errorf("error getting user from db: %w", err)
+	}
+
+	// get feed by url from database to set the feed follow's fk feed_id
+	feed, err := s.DB.GetFeedByURL(context.Background(), urlArg)
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// user check
+	if err != nil {
+		return fmt.Errorf("error getting feed from db: %w", err)
+	}
+
+	// create new feed follow in database
+
+	feedFollow, err := s.DB.CreateFeedFollows(context.Background(), database.CreateFeedFollowsParams{
+		ID:        id,          // set id to UUID
+		CreatedAt: currentTime, // set created at to current time
+		UpdatedAt: currentTime, // set updated at to current time
+		UserID:    user.ID,     // set user id to current user
+		FeedID:    feed.ID,     // set feed id to feed by url
+	})
+	// CreateFeedFollows is a method from DB pass through state s (we made using users.sql)
+	// CreateFeedFollowsParams is a struct that was genned in database package
+	// could do "_, err := ..." but we need feed for printing confirmation msg
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// feed follow check
+	if err != nil {
+		// check if unique
+		if strings.Contains(err.Error(), "unique constraint") {
+			return fmt.Errorf("error: you are already following this feed")
+		}
+		// other general error
+		return fmt.Errorf("error creating feed follow: %w", err)
+	}
+
+	// print confirmation msg to user + log user details
+	fmt.Printf("%s is now following: %s\n", // confirmation msg
+		feedFollow.Username, feedFollow.Feedname)
+
+	// return success
+	return nil
+}
+
+// following handler logic
+// NOTE: cmd will be following, and state holds the config file to print all feeds the current user is "following"
+func HandlerFollowing(s *app.State, cmd app.Command) error {
+	// state ptr check
+	if s == nil {
+		return fmt.Errorf("error: State is nil")
+	}
+
+	/* Note: the methods & struct that SQLC generated
+	METHOD GetFeedFollowsForUser:
+
+	func (q *Queries) GetFeedFollowsForUser(ctx context.Context, userID uuid.UUID) ([]GetFeedFollowsForUserRow, error) {
+		rows, err := q.db.QueryContext(ctx, getFeedFollowsForUser, userID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var items []GetFeedFollowsForUserRow
+		for rows.Next() {
+			var i GetFeedFollowsForUserRow
+			if err := rows.Scan(
+				&i.ID,
+				&i.CreatedAt,
+				&i.UpdatedAt,
+				&i.UserID,
+				&i.FeedID,
+				&i.Username,
+				&i.Feedname,
+			); err != nil {
+				return nil, err
+			}
+			items = append(items, i)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return items, nil
+	} */
+
+	// nil current user check
+	if s.Config.Name == nil {
+		return fmt.Errorf("error: current user is nil/not logged in")
+	}
+
+	// get current user (safely deref after checking nil ptr)
+	currentUser := *s.Config.Name // deref as it's *string :)
+
+	// get user by currentUser from database to set the feed follow's fk user_id
+	user, err := s.DB.GetUser(context.Background(), currentUser)
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// user check
+	if err != nil {
+		return fmt.Errorf("error getting user from db: %w", err)
+	}
+
+	// run the getfeedfollowsfor user command
+	feedFollows, err := s.DB.GetFeedFollowsForUser(context.Background(), user.ID)
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// getfeedfollowsofruser check
+	if err != nil {
+		fmt.Printf("error returning feed follows from database: %s\n", err)
+		os.Exit(1) // clean exit code 1
+	}
+
+	// no feed follows check
+	if len(feedFollows) == 0 {
+		fmt.Printf("No feed follows in database!\n")
+		os.Exit(0) // clean exit code 0
+	}
+
+	// print feeds follows header
+	fmt.Printf("Feeds followed by %s:\n", currentUser)
+	fmt.Println() // newline
+
+	// print names of feed follows from database for current user
+	for _, feedFollow := range feedFollows {
+		fmt.Printf("Feed name: %s\n", feedFollow.Feedname)
+		fmt.Println() // newline
+	}
+	// succesfully printed users
+	os.Exit(0) // clean exit code 0
+
+	// return success
+	return nil
+	// this will never be reached, but it's here for the requirement of the Register function
+	// and to make the function complete
 }

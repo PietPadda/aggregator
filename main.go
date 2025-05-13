@@ -91,7 +91,7 @@ func main() {
 	// HandlerAgg works on handlers, and registers "agg" there
 
 	// register the handler function for the addfeed cmd
-	cmds.Register("addfeed", handlers.HandlerAddFeed)
+	cmds.Register("addfeed", handlers.MiddlewareLoggedIn(handlers.HandlerAddFeed))
 	// adds a feed to the database (And follows it)
 	// "addfeed" = the command we register
 	// HandlerAgg works on handlers, and registers "addfeed" there
@@ -103,13 +103,13 @@ func main() {
 	// HandlerFeeds works on handlers, and registers "feeds" there
 
 	// register the handler function for the follow cmd
-	cmds.Register("follow", handlers.HandlerFollow)
+	cmds.Register("follow", handlers.MiddlewareLoggedIn(handlers.HandlerFollow))
 	// current user follows a feed
 	// "follow" = the command we register
 	// HandlerFollow works on handlers, and registers "follow" there
 
 	// register the handler function for the following cmd
-	cmds.Register("following", handlers.HandlerFollowing)
+	cmds.Register("following", handlers.MiddlewareLoggedIn(handlers.HandlerFollowing))
 	// lists all feeds the current user follows
 	// "following" = the command we register
 	// HandlerFollowing works on handlers, and registers "following" there

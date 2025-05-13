@@ -8,8 +8,8 @@ import (
 	"errors"       // for error handling
 	"fmt"          // print errors
 	"os"           // for file reading/writing
-	"strings"
-	"time" // context timeout
+	"strings"      // filter text in strs
+	"time"         // context timeout
 
 	// internal packages
 	"github.com/PietPadda/aggregator/internal/app"      // for State and Command
@@ -17,6 +17,51 @@ import (
 	"github.com/PietPadda/aggregator/internal/rssfeed"  // for RSS feed fetching
 	"github.com/google/uuid"                            // for UUID generation
 )
+
+// MIDDLEWARE
+
+// used to replace GetUser() and error checking inside handler command functions
+// PascalCase to export to main.go (as opposed to camelCase for package only)
+// NOTE: database.User --> database package has file models.go with User struct
+func MiddlewareLoggedIn(handler func(s *app.State, cmd app.Command, user database.User) error) func(*app.State, app.Command) error {
+	return func(s *app.State, cmd app.Command) error {
+		// state check
+		if s == nil {
+			return fmt.Errorf("error: State is nil")
+		}
+
+		// config check
+		if s.Config == nil {
+			return fmt.Errorf("error: Config is nil")
+
+		}
+
+		// logged in user check (allow safe dereffing)
+		if s.Config.Name == nil {
+			return fmt.Errorf("error: user is not logged in")
+		}
+
+		// empty username check
+		if *s.Config.Name == "" {
+			return fmt.Errorf("error: username is empty")
+		} //*s because we used *string!
+		// currentUser := *s.Config.Name
+
+		// get current user struct
+		user, err := s.DB.GetUser(context.Background(), *s.Config.Name)
+
+		// getuser check
+		if err != nil {
+			return fmt.Errorf("error getting user from db: %w", err)
+		}
+
+		// return the handler command from Handler map in config, in state
+		return handler(s, cmd, user)
+		// NOTE: we choose the name as "handler"
+	}
+}
+
+// COMMAND HANDLERS
 
 // login handler logic
 // NOTE: cmd will be login, and state holds the config file to "sign in" the user
@@ -362,7 +407,8 @@ func HandlerAgg(s *app.State, cmd app.Command) error {
 
 // addfeed handler logic
 // NOTE: cmd will be addfeed, and state holds the config file, it will add a new feed to the database
-func HandlerAddFeed(s *app.State, cmd app.Command) error {
+// now use middleware to provide user as input! not more GetUser()!
+func HandlerAddFeed(s *app.State, cmd app.Command, user database.User) error {
 	// state ptr check
 	if s == nil {
 		return fmt.Errorf("error: State is nil")
@@ -383,17 +429,10 @@ func HandlerAddFeed(s *app.State, cmd app.Command) error {
 		return fmt.Errorf("error: current user is nil/not logged in")
 	}
 
-	// get current user (safely deref after checking nil ptr)
-	currentUser := *s.Config.Name // deref as it's *string :)
-
-	// get user by currentUser from database to set the feed's fk user_id
-	user, err := s.DB.GetUser(context.Background(), currentUser)
+	// THIS PART IS NOW HANDLED BY MIDDLEWARELOGIN!
+	// get user by currentUser from database to set the feed follow's fk user_id
+	// user, err := s.DB.GetUser(context.Background(), currentUser)
 	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
-
-	// user check
-	if err != nil {
-		return fmt.Errorf("error getting user from db: %w", err)
-	}
 
 	// get feed id as UUID and timestamp for created/updated at fields
 	id := uuid.New()          // generate new UUID
@@ -470,8 +509,9 @@ func HandlerAddFeed(s *app.State, cmd app.Command) error {
 	}
 
 	// Call the follow handler to follow the feed!
-	// we'll use our "hacky" followCmd command to do thid!
-	err = HandlerFollow(s, followCmd)
+	// we'll use our "hacky" followCmd command to do this!
+	err = HandlerFollow(s, followCmd, user)
+	// NOTE: added user as it's required for our middleware :)
 
 	// follow handler check
 	if err != nil {
@@ -563,9 +603,11 @@ func HandlerFeeds(s *app.State, cmd app.Command) error {
 }
 
 // follow handler logic
+
 // NOTE: cmd will be follow, and state holds the config file to allow current user to "follow" a feed
 // essentially adds a feed follow record to the database
-func HandlerFollow(s *app.State, cmd app.Command) error {
+// now use middleware to provide user as input! not more GetUser()!
+func HandlerFollow(s *app.State, cmd app.Command, user database.User) error {
 	// state ptr check
 	if s == nil {
 		return fmt.Errorf("error: State is nil")
@@ -639,17 +681,10 @@ func HandlerFollow(s *app.State, cmd app.Command) error {
 		return fmt.Errorf("error: current user is nil/not logged in")
 	}
 
-	// get current user (safely deref after checking nil ptr)
-	currentUser := *s.Config.Name // deref as it's *string :)
-
+	// THIS PART IS NOW HANDLED BY MIDDLEWARELOGIN!
 	// get user by currentUser from database to set the feed follow's fk user_id
-	user, err := s.DB.GetUser(context.Background(), currentUser)
+	// user, err := s.DB.GetUser(context.Background(), currentUser)
 	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
-
-	// user check
-	if err != nil {
-		return fmt.Errorf("error getting user from db: %w", err)
-	}
 
 	// get feed by url from database to set the feed follow's fk feed_id
 	feed, err := s.DB.GetFeedByURL(context.Background(), urlArg)
@@ -694,7 +729,8 @@ func HandlerFollow(s *app.State, cmd app.Command) error {
 
 // following handler logic
 // NOTE: cmd will be following, and state holds the config file to print all feeds the current user is "following"
-func HandlerFollowing(s *app.State, cmd app.Command) error {
+// now use middleware to provide user as input! not more GetUser()!
+func HandlerFollowing(s *app.State, cmd app.Command, user database.User) error {
 	// state ptr check
 	if s == nil {
 		return fmt.Errorf("error: State is nil")
@@ -739,17 +775,13 @@ func HandlerFollowing(s *app.State, cmd app.Command) error {
 		return fmt.Errorf("error: current user is nil/not logged in")
 	}
 
-	// get current user (safely deref after checking nil ptr)
-	currentUser := *s.Config.Name // deref as it's *string :)
+	// get current user safely from MIDDELWARE!
+	currentUser := user.Name
 
+	// THIS PART IS NOW HANDLED BY MIDDLEWARELOGIN!
 	// get user by currentUser from database to set the feed follow's fk user_id
-	user, err := s.DB.GetUser(context.Background(), currentUser)
+	// user, err := s.DB.GetUser(context.Background(), currentUser)
 	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
-
-	// user check
-	if err != nil {
-		return fmt.Errorf("error getting user from db: %w", err)
-	}
 
 	// run the getfeedfollowsfor user command
 	feedFollows, err := s.DB.GetFeedFollowsForUser(context.Background(), user.ID)

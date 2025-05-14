@@ -85,6 +85,36 @@ func (q *Queries) CreateFeedFollows(ctx context.Context, arg CreateFeedFollowsPa
 	return i, err
 }
 
+const deleteFeedFollowByUserAndFeed = `-- name: DeleteFeedFollowByUserAndFeed :one
+DELETE FROM feed_follows ff
+USING feeds f
+WHERE f.url = $1         -- matches url
+  AND ff.user_id = $2    -- matches user_id
+  AND ff.feed_id = f.id  -- feed follow id matches feed id
+RETURNING ff.id, ff.created_at, ff.updated_at, ff.user_id, ff.feed_id
+`
+
+type DeleteFeedFollowByUserAndFeedParams struct {
+	Url    string
+	UserID uuid.UUID
+}
+
+// delete feed follow record by url for a user
+// using feeds table (PostgreSQL doesn't support inner join on delete)
+// where clause to filter record
+func (q *Queries) DeleteFeedFollowByUserAndFeed(ctx context.Context, arg DeleteFeedFollowByUserAndFeedParams) (FeedFollow, error) {
+	row := q.db.QueryRowContext(ctx, deleteFeedFollowByUserAndFeed, arg.Url, arg.UserID)
+	var i FeedFollow
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UserID,
+		&i.FeedID,
+	)
+	return i, err
+}
+
 const getFeedFollowsForUser = `-- name: GetFeedFollowsForUser :many
 SELECT
     ff.id,

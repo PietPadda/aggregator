@@ -114,6 +114,12 @@ func main() {
 	// "following" = the command we register
 	// HandlerFollowing works on handlers, and registers "following" there
 
+	// register the handler function for the unfollow cmd
+	cmds.Register("unfollow", handlers.MiddlewareLoggedIn(handlers.HandlerUnfollow))
+	// unfollows a feed for the logged in user
+	// "unfllow" = the command we register
+	// HandlerUnfollow works on handlers, and registers "unfollow" there
+
 	// CLI args check
 	// 2 CLI args min! 1st = command, 2nd = arg
 	if len(os.Args) < 2 {

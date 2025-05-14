@@ -50,3 +50,14 @@ INNER JOIN feeds f ON f.id = ff.feed_id
 WHERE ff.user_id = $1
 -- order by created_at descending (otherwise random with where clause)
 ORDER BY ff.created_at DESC;
+
+-- name: DeleteFeedFollowByUserAndFeed :one
+-- delete feed follow record by url for a user
+DELETE FROM feed_follows ff
+-- using feeds table (PostgreSQL doesn't support inner join on delete)
+USING feeds f
+-- where clause to filter record
+WHERE f.url = $1         -- matches url
+  AND ff.user_id = $2    -- matches user_id
+  AND ff.feed_id = f.id  -- feed follow id matches feed id
+RETURNING ff.*;          -- get the deleted record from feed follows table!

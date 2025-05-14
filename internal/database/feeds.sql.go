@@ -23,7 +23,7 @@ VALUES (
     $5,
     $6
 )
-RETURNING id, created_at, updated_at, name, url, user_id
+RETURNING id, created_at, updated_at, name, url, user_id, last_fetched_at
 `
 
 type CreateFeedParams struct {
@@ -53,6 +53,7 @@ func (q *Queries) CreateFeed(ctx context.Context, arg CreateFeedParams) (Feed, e
 		&i.Name,
 		&i.Url,
 		&i.UserID,
+		&i.LastFetchedAt,
 	)
 	return i, err
 }
@@ -64,8 +65,40 @@ WHERE url = $1 -- url to match the inputy
 LIMIT 1
 `
 
-func (q *Queries) GetFeedByURL(ctx context.Context, url string) (Feed, error) {
+type GetFeedByURLRow struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Name      string
+	Url       string
+	UserID    uuid.UUID
+}
+
+func (q *Queries) GetFeedByURL(ctx context.Context, url string) (GetFeedByURLRow, error) {
 	row := q.db.QueryRowContext(ctx, getFeedByURL, url)
+	var i GetFeedByURLRow
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Name,
+		&i.Url,
+		&i.UserID,
+	)
+	return i, err
+}
+
+const getNextFeedToFetch = `-- name: GetNextFeedToFetch :one
+
+SELECT id, created_at, updated_at, name, url, user_id, last_fetched_at FROM feeds          -- we return ALL cols for ScrapeFeeds
+ORDER BY last_fetched_at ASC -- from oldest to newest
+NULLS FIRST                   -- any null fetched at record first, these are EVEN older!
+LIMIT 1
+`
+
+// use feed_id (unique as it's a pk)
+func (q *Queries) GetNextFeedToFetch(ctx context.Context) (Feed, error) {
+	row := q.db.QueryRowContext(ctx, getNextFeedToFetch)
 	var i Feed
 	err := row.Scan(
 		&i.ID,
@@ -74,6 +107,7 @@ func (q *Queries) GetFeedByURL(ctx context.Context, url string) (Feed, error) {
 		&i.Name,
 		&i.Url,
 		&i.UserID,
+		&i.LastFetchedAt,
 	)
 	return i, err
 }
@@ -111,4 +145,19 @@ func (q *Queries) ListFeedsWithCreator(ctx context.Context) ([]ListFeedsWithCrea
 		return nil, err
 	}
 	return items, nil
+}
+
+const markFeedFetched = `-- name: MarkFeedFetched :exec
+
+UPDATE feeds
+SET
+  updated_at = NOW(),
+  last_fetched_at = NOW()
+WHERE id = $1
+`
+
+// ensure only one record is returned
+func (q *Queries) MarkFeedFetched(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, markFeedFetched, id)
+	return err
 }

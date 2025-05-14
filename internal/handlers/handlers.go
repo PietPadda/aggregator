@@ -816,3 +816,90 @@ func HandlerFollowing(s *app.State, cmd app.Command, user database.User) error {
 	// this will never be reached, but it's here for the requirement of the Register function
 	// and to make the function complete
 }
+
+// unfollow handler logic
+// NOTE: cmd will be unfollow, and state holds the config file to "unfollow" a feed follow from current user
+func HandlerUnfollow(s *app.State, cmd app.Command, user database.User) error {
+	// state ptr check
+	if s == nil {
+		fmt.Printf("error: State is nil")
+		os.Exit(1) // clean exit code 1
+	}
+
+	/* Note: the method and struct that SQLC generated
+	METHOD DeleteFeedFollowByUserAndFeed:
+
+	func (q *Queries) DeleteFeedFollowByUserAndFeed(ctx context.Context, arg DeleteFeedFollowByUserAndFeedParams) (FeedFollow, error) {
+		row := q.db.QueryRowContext(ctx, deleteFeedFollowByUserAndFeed, arg.Url, arg.UserID)
+		var i FeedFollow
+		err := row.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.UserID,
+			&i.FeedID,
+		)
+		return i, err
+	}
+
+
+	STRUCTD DeleteFeedFollowByUserAndFeedParams:
+
+	type DeleteFeedFollowByUserAndFeedParams struct {
+		Url    string
+		UserID uuid.UUID
+	} */
+
+	// nil current user check
+	if s.Config.Name == nil {
+		return fmt.Errorf("error: current user is nil/not logged in")
+	}
+
+	// cmd input check
+	// command is a struct, get its field for length check
+	if len(cmd.Args) < 1 {
+		return fmt.Errorf("error: feed url required")
+	} // login handler expects TWO arg: feed NAME and URL!
+
+	// get arguments input
+	feedURL := cmd.Args[0] // not needed, but nicely readable!
+
+	// get current user safely from MIDDLEWARE!
+	currentUserID := user.ID
+	currentUser := user.Name
+
+	// create SQL struct
+
+	// run the unfollow command
+	_, err := s.DB.DeleteFeedFollowByUserAndFeed(context.Background(), database.DeleteFeedFollowByUserAndFeedParams{
+		Url:    feedURL,       // set feed url from arg
+		UserID: currentUserID, // set user id from middleware
+	})
+	// DeleteFeedFollowByUserAndFeed is a method from DB pass through state s (we made using feed_follows.sql)
+	// DeleteFeedFollowByUserAndFeedParams is a struct that was genned in database package
+	// doing "_, err := ..." because we're not using the feed follow!
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// feed follow exists check
+	if errors.Is(err, sql.ErrNoRows) {
+		fmt.Printf("%s is not following this feed!\n", currentUser)
+		os.Exit(0) // clean exit
+	}
+	// errors.Is sql.ErrNoRows > err = sql.ErrNoRows
+	// why? it includes wrapped errors, the error returned may not match exactly!
+
+	// unfollow check
+	if err != nil {
+		fmt.Printf("error unfollowing feed: %s\n", err)
+		os.Exit(1) // clean exit code 1
+	}
+
+	// success with code 0
+	fmt.Printf("Feed successfully unfollowed!\n")
+	os.Exit(0) // clean exit code 0
+
+	// return success
+	return nil
+	// this will never be reached, but it's here for the requirement of the Register function
+	// and to make the function complete
+}

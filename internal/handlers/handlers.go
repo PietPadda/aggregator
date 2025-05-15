@@ -7,15 +7,19 @@ import (
 	"database/sql" // for sql errors
 	"errors"       // for error handling
 	"fmt"          // print errors
-	"os"           // for file reading/writing
-	"strings"      // filter text in strs
-	"time"         // context timeout
+	"html"
+	"os" // for file reading/writing
+	"strconv"
+	"strings" // filter text in strs
+	"time"    // context timeout
 
 	// internal packages
 	"github.com/PietPadda/aggregator/internal/app"      // for State and Command
 	"github.com/PietPadda/aggregator/internal/database" // for DB Go code from SQLC
 	"github.com/PietPadda/aggregator/internal/rssfeed"  // for RSS feed fetching
+	"github.com/araddon/dateparse"                      // for publication date of post parsing
 	"github.com/google/uuid"                            // for UUID generation
+	"github.com/lib/pq"
 )
 
 // MIDDLEWARE
@@ -905,6 +909,91 @@ func HandlerUnfollow(s *app.State, cmd app.Command, user database.User) error {
 	// and to make the function complete
 }
 
+// browse handler logic
+// NOTE: cmd will be browse, and state holds the config file to print or "browse" all posts of feeds the current user is "following"
+// now use middleware to provide user as input! not more GetUser()!
+func HandlerBrowse(s *app.State, cmd app.Command, user database.User) error {
+	// state ptr check
+	if s == nil {
+		return fmt.Errorf("error: State is nil")
+	}
+
+	// nil current user check
+	if s.Config.Name == nil {
+		return fmt.Errorf("error: current user is nil/not logged in")
+	}
+
+	// Go requires var BEFORE if blocks to update it within function scope
+	var postLimit int32 = 2 // Default value
+	// why int32? because thats' what PostgreSQL uses!
+
+	// cmd input check
+	// command is a struct, get its field for length check
+	if len(cmd.Args) > 0 { // IF an arg was input
+		// first convert STRING to INT
+		limit, err := strconv.Atoi(cmd.Args[0]) // conv input str to int
+
+		// conversion check
+		if err != nil {
+			fmt.Println("Invalid limit input! Using defaut of 2.")
+		}
+
+		// pass error, update the postLimit
+		postLimit = int32(limit) // our OPTIONAL input!
+		// must also be int32 for PostgreSQL!
+	}
+	// browse handler expects ONE arg: the post limit!
+	// but we can omit and have a default of 2
+
+	// get current user safely from MIDDELWARE!
+	currentUser := user.Name
+
+	// THIS PART IS NOW HANDLED BY MIDDLEWARELOGIN!
+	// get user by currentUser from database to set the feed follow's fk user_id
+	// user, err := s.DB.GetUser(context.Background(), currentUser)
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// run the getpostsforuser user command
+	userPosts, err := s.DB.GetPostsForUser(context.Background(), database.GetPostsForUserParams{
+		UserID: user.ID,   // set user id from middleware
+		Limit:  postLimit, // set limit to 10
+	})
+
+	// context.Background() provides root empty context with no deadlines or cancellation - required by DB API
+
+	// getpostsforuser check
+	if err != nil {
+		fmt.Printf("error returning posts from database: %s\n", err)
+		os.Exit(1) // clean exit code 1
+	}
+
+	// no feed follows check
+	if len(userPosts) == 0 {
+		fmt.Printf("No posts from feeds followed in database!\n")
+		os.Exit(0) // clean exit code 0
+	}
+
+	// print feeds follows header
+	fmt.Printf("Posts from feeds followed by %s:\n", currentUser)
+	fmt.Println() // newline
+
+	// print names of posts from database for current user
+	for _, userPost := range userPosts {
+		fmt.Printf("Post name: %s\n", userPost.Title)
+		fmt.Printf("Post url: %s\n", userPost.Url)
+		fmt.Printf("Post pubdate: %s\n", userPost.PublishedAt.Time)   // was nullable, need to call .Time!
+		fmt.Printf("Post content: %s\n", userPost.Description.String) // was nullable, need to call .String!
+		fmt.Println()                                                 // newline
+	}
+	// succesfully printed users
+	os.Exit(0) // clean exit code 0
+
+	// return success
+	return nil
+	// this will never be reached, but it's here for the requirement of the Register function
+	// and to make the function complete
+}
+
 // HELPER FUNCTIONS
 
 // aggregation function helper to get feeds for agg command
@@ -963,7 +1052,128 @@ func scrapeFeeds(queries *database.Queries) error {
 
 	// loop over rssfeed and print title of each item in feed
 	for _, item := range feed.Channel.Items {
+		// we still print the feed title
 		fmt.Printf(" - %s\n", item.Title)
+
+		// CREATE POST after scraping feeds
+
+		// get post id as UUID and timestamp for created/updated at fields
+		id := uuid.New()          // generate new UUID
+		currentTime := time.Now() // get current time
+
+		// PUBLICATION DATE - SQL.NULLTIME & PARSING
+		// let's parse the published_at using dateparse.ParseAny()
+		// and using sql.NullTime to ensure our DB can tell that nil is supposed to be NULL
+
+		// create a nullable database/sql type for Time
+		var publishedAt sql.NullTime
+		// has 2 fields: Time & Valid! Can only set these if parsing succeeds
+
+		// Default to invalid time
+		publishedAt.Valid = false
+
+		// pubdate check (only if we actually received a url, not "" empty)
+		if item.PubDate != "" { // it's actually provided, not empty
+			// then we parse the date for any wacky formatting
+			parsedDate, err := dateparse.ParseAny(item.PubDate)
+
+			// date parse check
+			if err != nil {
+				// let's not crash the agg, just give warning as graceful degradation
+				fmt.Printf("Warning: could not parse date '%s': %v\n", item.PubDate, err)
+			} else { // else, parsing worked
+				publishedAt.Time = parsedDate // set to parsed date
+				publishedAt.Valid = true      // set parsing as success
+			}
+		}
+
+		// DESCRIPTION - SQL.NULLSTRING
+		// we need a nullable description, can't just pass "" into it!
+
+		// Unescape description for HTML thingies
+		unescapeDescription := html.UnescapeString(item.Description)
+
+		// create a nullable database/sql type for Time
+		var postDescription sql.NullString
+		// has 2 fields: Time & Valid! Can only set these if parsing succeeds
+
+		// set description string
+		postDescription.String = unescapeDescription // pass the uhtml nescaped version
+
+		// first check if valid
+		if item.Description != "" { // it's actually provided, not empty
+			postDescription.Valid = true
+		} else { // else, description doesn't exist
+			postDescription.Valid = false
+		}
+
+		// Unescape title for HTML thingies
+		unescapeTitle := html.UnescapeString(item.Title)
+
+		// empty title check (may not be null!)
+		if unescapeTitle == "" {
+			// graceful degradation
+			fmt.Println("Post has no title, skipping...")
+			continue // skip to next post
+		}
+
+		// Unescape url for HTML thingies
+		unescapeLink := html.UnescapeString(item.Link)
+
+		// empty link check (may not be null!)
+		if unescapeLink == "" {
+			// graceful degradation
+			fmt.Println("Post has no url, skipping...")
+			continue // skip to next post
+		}
+
+		/* CREATEPOSTPARAMS struct from posts.sql.go
+
+		type CreatePostParams struct {
+			ID          uuid.UUID
+			CreatedAt   time.Time
+			UpdatedAt   time.Time
+			Title       string
+			Url         string
+			Description sql.NullString
+			PublishedAt sql.NullTime
+			FeedID      uuid.UUID
+		} */
+
+		_, err := queries.CreatePost(context.Background(), database.CreatePostParams{
+			ID:          id,
+			CreatedAt:   currentTime,
+			UpdatedAt:   currentTime,
+			Title:       unescapeTitle,
+			Url:         item.Link,       // item has Link, not url, samesame!
+			Description: postDescription, // nullable string
+			PublishedAt: publishedAt,     // nullable time and parsed
+			FeedID:      feedID,
+		})
+		// CreatePost is a method from DB pass through state s (we made using posts.sql)
+		// CreatePostParams is a struct that was genned in database package
+		// do "_, err := ..." as we don't need post (not logging ALL details)
+
+		// ENSURE URL IS UNIQUE (to handle error gracefully)
+		pqErr, isPQError := err.(*pq.Error)
+
+		// handle specific error first
+		// check if url duplication occured
+		if isPQError && pqErr.Code == "23505" {
+			// the error exists and it matches the PostgreSQL code for unique duplication
+			// graceful degradation
+			fmt.Printf("Warning: Post with URL %s already exists in database: %v\n", item.Link, pqErr)
+			fmt.Println("Skipping this post...")
+			continue // skip to next post
+		}
+
+		// now do general error check
+		if err != nil {
+			return fmt.Errorf("error creating post: %w", err)
+		}
+
+		// print confirmation msg to user (full logging would be too verbose)
+		fmt.Printf("Post '%s' has successfully been added to database!\n", unescapeTitle) // confirmation msg
 	}
 
 	// print newline for visual clairty

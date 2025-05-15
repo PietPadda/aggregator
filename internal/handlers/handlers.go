@@ -358,51 +358,52 @@ func HandlerAgg(s *app.State, cmd app.Command) error {
 		return fmt.Errorf("error: State is nil")
 	}
 
-	// create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel() // Don't forget to cancel to prevent resource leaks
-	// context.WithTimeout creates a new context with a timeout of 10 seconds
-	// this is used to limit the time the function can run, in case of a slow network or server
-	// cancel is a function that cancels the context, and should be called when done
+	// cmd input check
+	// command is a struct, get its field for length check
+	if len(cmd.Args) < 1 {
+		return fmt.Errorf("error: time between requests required")
+	} // agg handler expects ONE arg: time_between_reqs!!
 
-	// run the fetchfeed command
-	feed, err := rssfeed.FetchFeed(ctx, "https://www.wagslane.dev/index.xml")
+	// get arguments input
+	timeInput := cmd.Args[0] // not needed, but nicely readable!
 
-	// fetchfeed check
+	// parse the time duration string
+	timeBetweenRequests, err := time.ParseDuration(timeInput)
+
+	// time between requests check
 	if err != nil {
-		return fmt.Errorf("error aggregating RSS feed: %w", err)
+		return fmt.Errorf("error: invalid duration format: %w", err)
 	}
 
-	// print the entire RSSFeed struct
-	// HEADER
-	fmt.Printf("RSS Feed:\n")
+	// init the infinite loop time.Ticker()
+	timeTicker := time.NewTicker(timeBetweenRequests)
+	defer timeTicker.Stop() // stop the ticker when command ends
+	// CORE: it will NEVER end because it's an infinite loop!
+	// but good practice to add in anyway
 
-	// CHANNEL
-	fmt.Printf("  Title: %s\n", feed.Channel.Title)
-	fmt.Printf("  Link: %s\n", feed.Channel.Link)
-	fmt.Printf("  Description: %s\n", feed.Channel.Description)
-	fmt.Printf("  Generator: %s\n", feed.Channel.Generator)
-	fmt.Printf("  Language: %s\n", feed.Channel.Language)
-	fmt.Printf("  LastBuildDate: %s\n", feed.Channel.LastBuildDate)
-	fmt.Printf("  Atom: %s\n", feed.Channel.Atom.Href)
-	fmt.Printf("  Atom Rel: %s\n", feed.Channel.Atom.Rel)
-	fmt.Printf("  Atom Type: %s\n", feed.Channel.Atom.Type)
+	// inform user of the time interval
+	fmt.Printf("Collecting feeds every %v\n", timeBetweenRequests)
 
-	// RSSFEED
-	fmt.Printf("  Items:\n")
-	for _, item := range feed.Channel.Items {
-		fmt.Printf("    Title: %s\n", item.Title)
-		fmt.Printf("    Link: %s\n", item.Link)
-		fmt.Printf("    PubDate: %s\n", item.PubDate)
-		fmt.Printf("    GUID: %s\n", item.GUID)
-		fmt.Printf("    Description: %s\n", item.Description)
+	// start an infinite loop with a time.Ticker()
+	for {
+		// scrape the feeds immediately!
+		err = scrapeFeeds(s.DB)
+
+		// scrape feeds check
+		if err != nil {
+			fmt.Printf("error scraping the feeds: %s\n", err)
+		}
+
+		// block the loop and wait until ticker TICKS!
+		<-timeTicker.C // ticker runs on it's own channel called C
+		// <- = reads from the ticker channel, which sends the current time at regular intervals
+		// we set the "tick" to be timeBetweenRequests
 	}
-
-	// succesfully printed RSSFeed user confirmation msg
-	fmt.Printf("RSS Feed successfully aggregated!\n")
 
 	// return success
 	return nil
+	// this UNREACHABLE code, as we have an infinite loop that only ends on ctrl+c!!!!
+	// just formality as function returns an error value
 }
 
 // addfeed handler logic
@@ -902,4 +903,72 @@ func HandlerUnfollow(s *app.State, cmd app.Command, user database.User) error {
 	return nil
 	// this will never be reached, but it's here for the requirement of the Register function
 	// and to make the function complete
+}
+
+// HELPER FUNCTIONS
+
+// aggregation function helper to get feeds for agg command
+func scrapeFeeds(queries *database.Queries) error {
+	// database queries check
+	if queries == nil {
+		return fmt.Errorf("error: database queries is nil")
+	}
+
+	// use GetNextFeedToFetch to... get the next feed to fetch!
+	nextFeed, err := queries.GetNextFeedToFetch(context.Background())
+
+	// get next feed to fetch check
+	if err != nil {
+		// check if no needs available in DB
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Println("No feeds found in database. Add some using the 'addfeed' command.")
+			return nil
+		}
+		return fmt.Errorf("error getting next feed to fetch: %w", err)
+	}
+
+	// get feed data (not needed, but nice and readable!)
+	feedID := nextFeed.ID
+	feedName := nextFeed.Name
+	feedURL := nextFeed.Url
+
+	// mark the feed as fetched
+	err = queries.MarkFeedFetched(context.Background(), feedID)
+
+	// mark feed fetched check
+	if err != nil {
+		return fmt.Errorf("error marking feed as fetched: %w", err)
+	}
+
+	// tell user that fetching has started!
+	fmt.Printf("Fetching feed: %s (%s)\n", feedName, feedURL)
+
+	// create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel() // Don't forget to cancel to prevent resource leaks
+	// context.WithTimeout creates a new context with a timeout of 10 seconds
+	// this is used to limit the time the function can run, in case of a slow network or server
+	// cancel is a function that cancels the context, and should be called when done
+
+	// fetch the feed using url (from rssfeed.go)
+	feed, err := rssfeed.FetchFeed(ctx, feedURL)
+
+	// fetch feed check
+	if err != nil {
+		return fmt.Errorf("error fetching the marked feed %s: %w", feedName, err)
+	}
+
+	// print the feed info
+	fmt.Printf("Feed: %s\n", feedName)
+
+	// loop over rssfeed and print title of each item in feed
+	for _, item := range feed.Channel.Items {
+		fmt.Printf(" - %s\n", item.Title)
+	}
+
+	// print newline for visual clairty
+	fmt.Println()
+
+	// return success
+	return nil
 }
